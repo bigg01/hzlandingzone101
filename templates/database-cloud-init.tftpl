@@ -1,0 +1,203 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - postgresql
+  - unzip
+  - jq
+
+write_files:
+  - path: /etc/consul.d/client.hcl
+    owner: root:root
+    permissions: '0644'
+    content: |
+      datacenter = "${datacenter}"
+      data_dir = "/opt/consul"
+      server = false
+      retry_join = ${jsonencode(consul_retry_join)}
+      
+      bind_addr = "{{ GetPrivateIP }}"
+      advertise_addr = "{{ GetPrivateIP }}"
+      
+      connect {
+        enabled = true
+      }
+      
+      ports {
+        grpc = 8502
+      }
+  
+  - path: /etc/consul.d/postgres-service.hcl
+    owner: root:root
+    permissions: '0644'
+    content: |
+      service {
+        name = "postgres"
+        id = "${service_id}"
+        port = 5432
+        
+        tags = ["${environment}", "database", "postgresql", "${instance_tag}"]
+        
+        meta = {
+          version = "16"
+          instance = "${instance_number}"
+        }
+        
+        connect {
+          sidecar_service {
+            port = 20000
+            proxy {}
+          }
+        }
+        
+        checks = [
+          {
+            id       = "postgres-tcp"
+            name     = "PostgreSQL TCP Check"
+            tcp      = "127.0.0.1:5432"
+            interval = "10s"
+            timeout  = "2s"
+          }
+        ]
+      }
+
+  - path: /usr/local/bin/setup-postgres.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      
+      # Start postgres (in case not yet running)
+      systemctl start postgresql || true
+      # Find postgres config directory
+      PGCONF_DIR=$$(ls -d /etc/postgresql/*/main 2>/dev/null | head -n1 || true)
+      if [ -z "$$PGCONF_DIR" ]; then
+        echo "No postgres config dir found, exiting"
+        exit 0
+      fi
+      # Ensure postgres listens on the private network and localhost
+      if grep -q '^#listen_addresses' "$$PGCONF_DIR/postgresql.conf" 2>/dev/null; then
+        sed -i "s/^#listen_addresses.*/listen_addresses = '${network_cidr},localhost'/" "$$PGCONF_DIR/postgresql.conf"
+      elif grep -q '^listen_addresses' "$$PGCONF_DIR/postgresql.conf" 2>/dev/null; then
+        sed -i "s/^listen_addresses.*/listen_addresses = '${network_cidr},localhost'/" "$$PGCONF_DIR/postgresql.conf"
+      else
+        echo "listen_addresses = '${network_cidr},localhost'" >> "$$PGCONF_DIR/postgresql.conf"
+      fi
+      # Add PG HBA entry to allow private network access with md5 (append if not present)
+      if ! grep -q '^host\s\+all\s\+all\s\+${network_cidr}\s\+md5' "$$PGCONF_DIR/pg_hba.conf" 2>/dev/null; then
+        echo "host    all             all             ${network_cidr}            md5" >> "$$PGCONF_DIR/pg_hba.conf"
+      fi
+      # Restart postgres to apply changes
+      systemctl restart postgresql
+      # Create credentials file and random passwords
+      CREDFILE=/root/postgres-credentials.txt
+      umask 077
+      : > "$$CREDFILE"
+      POSTGRES_PASS=$$(openssl rand -hex 16)
+      APP_USER="app_user"
+      APP_DB="app_db"
+      APP_PASS=$$(openssl rand -hex 16)
+      # Set postgres superuser password and create application user/database
+      sudo -u postgres psql -v ON_ERROR_STOP=1 <<SQL
+      ALTER USER postgres WITH PASSWORD '$${POSTGRES_PASS}';
+      CREATE USER $${APP_USER} WITH ENCRYPTED PASSWORD '$${APP_PASS}';
+      CREATE DATABASE $${APP_DB} WITH OWNER $${APP_USER};
+      SQL
+      # Persist credentials for operator retrieval (secure file)
+      {
+        echo "postgres:$${POSTGRES_PASS}"
+        echo "$${APP_USER}:$${APP_PASS}"
+        echo "database:$${APP_DB}"
+      } >> "$$CREDFILE"
+      chmod 600 "$$CREDFILE"
+      echo "PostgreSQL configured. Credentials saved to $$CREDFILE"
+
+bootcmd:
+  - [ bash, -lc, "/usr/local/bin/setup-postgres.sh" ]
+
+users:
+  - name: admin
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+runcmd:
+  # Install Consul
+  - |
+    CONSUL_VERSION="${consul_version}"
+    cd /tmp
+    wget -q https://releases.hashicorp.com/consul/$${CONSUL_VERSION}/consul_$${CONSUL_VERSION}_linux_amd64.zip
+    unzip consul_$${CONSUL_VERSION}_linux_amd64.zip
+    mv consul /usr/local/bin/
+    rm consul_$${CONSUL_VERSION}_linux_amd64.zip
+  
+  # Install Envoy
+  - |
+    curl -sL https://func-e.io/install.sh | bash -s -- -b /usr/local/bin
+    /usr/local/bin/func-e use ${envoy_version}
+    cp /root/.func-e/versions/${envoy_version}/bin/envoy /usr/local/bin/
+  
+  # Create Consul user and directories
+  - useradd --system --home /etc/consul.d --shell /bin/false consul || true
+  - mkdir -p /opt/consul /etc/consul.d
+  - chown -R consul:consul /opt/consul /etc/consul.d
+  
+  # Create Consul systemd service
+  - |
+    cat > /etc/systemd/system/consul.service <<CONSUL_SVC
+    [Unit]
+    Description=Consul Agent
+    Documentation=https://www.consul.io/
+    After=network-online.target
+    Wants=network-online.target
+    
+    [Service]
+    Type=notify
+    User=consul
+    Group=consul
+    ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d/
+    ExecReload=/bin/kill -HUP \$$MAINPID
+    KillMode=process
+    KillSignal=SIGTERM
+    Restart=on-failure
+    LimitNOFILE=65536
+    
+    [Install]
+    WantedBy=multi-user.target
+    CONSUL_SVC
+  
+  # Start Consul
+  - systemctl daemon-reload
+  - systemctl enable consul
+  - systemctl start consul
+  
+  # Wait for Consul to be ready
+  - sleep 15
+  
+  # Start sidecar proxy
+  - |
+    cat > /etc/systemd/system/consul-sidecar.service <<SIDECAR_SVC
+    [Unit]
+    Description=Consul Connect Sidecar Proxy for postgres
+    After=consul.service postgresql.service
+    Requires=consul.service
+    
+    [Service]
+    Type=simple
+    ExecStart=/usr/local/bin/consul connect envoy -sidecar-for ${service_id} -admin-bind 127.0.0.1:19000
+    Restart=always
+    RestartSec=5
+    
+    [Install]
+    WantedBy=multi-user.target
+    SIDECAR_SVC
+  
+  - systemctl daemon-reload
+  - systemctl enable consul-sidecar
+  - systemctl start consul-sidecar
+  
+  # Set hostname
+  - hostnamectl set-hostname ${hostname}

@@ -1,0 +1,190 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - wireguard
+  - fail2ban
+  - ufw
+  - qrencode
+  - htop
+  - vim
+  - curl
+  - wget
+  - git
+  - unzip
+  - jq
+
+write_files:
+  - path: /etc/consul.d/server.hcl
+    owner: root:root
+    permissions: '0644'
+    content: |
+      datacenter = "${datacenter}"
+      data_dir = "/opt/consul"
+      server = true
+      bootstrap_expect = 1
+      bind_addr = "${consul_bind_addr}"
+      client_addr = "0.0.0.0"
+      
+      ui_config {
+        enabled = true
+      }
+      
+      connect {
+        enabled = true
+      }
+      
+      ports {
+        grpc = 8502
+      }
+      
+      acl {
+        enabled = false
+        default_policy = "allow"
+        enable_token_persistence = true
+      }
+
+users:
+  - name: admin
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+runcmd:
+  # Enable IP forwarding
+  - sysctl -w net.ipv4.ip_forward=1
+  - sysctl -w net.ipv6.conf.all.forwarding=1
+  - sed -i '/^#net.ipv4.ip_forward=1/s/^#//' /etc/sysctl.conf
+  - sed -i '/^#net.ipv6.conf.all.forwarding=1/s/^#//' /etc/sysctl.conf
+  
+  # Configure fail2ban
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+  
+  # Setup basic UFW rules (WireGuard + Consul)
+  - ufw allow 51820/udp
+  - ufw allow 22/tcp
+  - ufw allow 8500/tcp
+  - ufw allow 8501/tcp
+  - ufw allow 8502/tcp
+  - ufw allow 8600/tcp
+  - ufw allow 8600/udp
+  - ufw allow 8300/tcp
+  - ufw allow 8301/tcp
+  - ufw allow 8301/udp
+  - ufw allow 8302/tcp
+  - ufw allow 8302/udp
+  - ufw --force enable
+  
+  # Generate WireGuard keys
+  - |
+    if [ ! -f /etc/wireguard/wg0.conf ]; then
+      umask 077
+      wg genkey | tee /etc/wireguard/privatekey | wg pubkey > /etc/wireguard/publickey
+      PRIVKEY=`cat /etc/wireguard/privatekey`
+      PUBKEY=`cat /etc/wireguard/publickey`
+      cat > /etc/wireguard/wg0.conf <<WGEOF
+    [Interface]
+    Address = 192.168.100.1/24
+    ListenPort = 51820
+    PrivateKey = $$PRIVKEY
+    PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+    PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+    WGEOF
+      chmod 600 /etc/wireguard/wg0.conf
+      systemctl enable wg-quick@wg0
+      systemctl start wg-quick@wg0
+      
+      # Save keys to file for easy retrieval
+      echo "WireGuard Public Key: $$PUBKEY" > /root/wireguard-info.txt
+      echo "Server Public IP: `curl -s ifconfig.me`" >> /root/wireguard-info.txt
+    fi
+  
+  # Install Consul
+  - |
+    CONSUL_VERSION="${consul_version}"
+    cd /tmp
+    wget -q https://releases.hashicorp.com/consul/$${CONSUL_VERSION}/consul_$${CONSUL_VERSION}_linux_amd64.zip
+    unzip consul_$${CONSUL_VERSION}_linux_amd64.zip
+    mv consul /usr/local/bin/
+    rm consul_$${CONSUL_VERSION}_linux_amd64.zip
+    consul version
+  
+  # Create Consul user and directories
+  - useradd --system --home /etc/consul.d --shell /bin/false consul || true
+  - mkdir -p /opt/consul /etc/consul.d
+  - chown -R consul:consul /opt/consul /etc/consul.d
+  
+  # Create Consul systemd service
+  - |
+    cat > /etc/systemd/system/consul.service <<CONSUL_SVC
+    [Unit]
+    Description=Consul Service Discovery and Configuration
+    Documentation=https://www.consul.io/
+    After=network-online.target
+    Wants=network-online.target
+    
+    [Service]
+    Type=notify
+    User=consul
+    Group=consul
+    ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d/
+    ExecReload=/bin/kill -HUP \$$MAINPID
+    KillMode=process
+    KillSignal=SIGTERM
+    Restart=on-failure
+    LimitNOFILE=65536
+    
+    [Install]
+    WantedBy=multi-user.target
+    CONSUL_SVC
+  
+  # Start Consul
+  - systemctl daemon-reload
+  - systemctl enable consul
+  - systemctl start consul
+  
+  # Wait for Consul to be ready
+  - sleep 10
+  
+  # Create helper script for intentions
+  - |
+    cat > /usr/local/bin/setup-consul-intentions.sh <<'INTENTIONS'
+    #!/bin/bash
+    # Wait for Consul to be fully ready
+    until consul members > /dev/null 2>&1; do
+      echo "Waiting for Consul..."
+      sleep 5
+    done
+    
+    echo "Setting up Consul service mesh intentions..."
+    
+    # Default deny (uncomment when ready for zero-trust)
+    # consul intention create -deny '*' '*'
+    
+    # Allow web to api
+    consul intention create -allow -replace web api || true
+    
+    # Allow api to postgres
+    consul intention create -allow -replace api postgres || true
+    
+    # Allow bastion monitoring
+    consul intention create -allow -replace bastion '*' || true
+    
+    echo "Consul intentions configured"
+    consul intention list
+    INTENTIONS
+    chmod +x /usr/local/bin/setup-consul-intentions.sh
+  
+  # Set hostname
+  - hostnamectl set-hostname ${hostname}
+  
+  # Save Consul info
+  - |
+    sleep 5
+    echo "Consul UI: http://$$(curl -s ifconfig.me):8500" >> /root/consul-info.txt
+    echo "Consul Datacenter: ${datacenter}" >> /root/consul-info.txt
+    echo "" >> /root/consul-info.txt
+    echo "Run '/usr/local/bin/setup-consul-intentions.sh' to configure service mesh policies" >> /root/consul-info.txt

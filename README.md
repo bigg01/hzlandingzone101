@@ -4,6 +4,9 @@ This Terraform configuration creates a foundational landing zone infrastructure 
 
 > **📝 Note**: A cloud-init syntax error was discovered and fixed in this version. See [CLOUD-INIT-FIX.md](CLOUD-INIT-FIX.md) for details. Future deployments will work correctly.
 
+⚠️ Disclaimer: AI-Assisted Content
+This CODE  was generated with the assistance of an Artificial Intelligence (AI) Large Language Model, GitHub Copilot. While the content has been reviewed for accuracy and relevance to this project, it may contain inaccuracies or variations from expected documentation standards.
+
 ## Architecture Overview
 
 The landing zone includes:

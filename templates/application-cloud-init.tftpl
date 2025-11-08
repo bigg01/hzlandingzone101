@@ -1,0 +1,174 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - unzip
+  - jq
+  - nginx
+
+write_files:
+  - path: /etc/consul.d/client.hcl
+    owner: root:root
+    permissions: '0644'
+    content: |
+      datacenter = "${datacenter}"
+      data_dir = "/opt/consul"
+      server = false
+      retry_join = ${jsonencode(consul_retry_join)}
+      
+      bind_addr = "{{ GetPrivateIP }}"
+      advertise_addr = "{{ GetPrivateIP }}"
+      
+      connect {
+        enabled = true
+      }
+      
+      ports {
+        grpc = 8502
+      }
+  
+  - path: /etc/consul.d/web-service.hcl
+    owner: root:root
+    permissions: '0644'
+    content: |
+      service {
+        name = "web"
+        id = "${service_id}"
+        port = 80
+        
+        tags = ["${environment}", "web-server", "${instance_tag}"]
+        
+        meta = {
+          version = "1.0.0"
+          instance = "${instance_number}"
+        }
+        
+        connect {
+          sidecar_service {
+            port = 20000
+            proxy {
+              upstreams = [
+                {
+                  destination_name = "api"
+                  local_bind_port  = 8080
+                }
+              ]
+            }
+          }
+        }
+        
+        checks = [
+          {
+            id       = "web-http"
+            name     = "HTTP health check"
+            http     = "http://127.0.0.1:80/"
+            interval = "10s"
+            timeout  = "2s"
+          }
+        ]
+      }
+  
+  - path: /var/www/html/index.html
+    owner: root:root
+    permissions: '0644'
+    content: |
+      <!DOCTYPE html>
+      <html>
+      <head><title>Web Server ${instance_number}</title></head>
+      <body>
+        <h1>Landing Zone Web Server ${instance_number}</h1>
+        <p>Instance: ${hostname}</p>
+        <p>Environment: ${environment}</p>
+        <p>Consul Service Mesh: Enabled</p>
+      </body>
+      </html>
+
+users:
+  - name: admin
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+runcmd:
+  # Install Consul
+  - |
+    CONSUL_VERSION="${consul_version}"
+    cd /tmp
+    wget -q https://releases.hashicorp.com/consul/$${CONSUL_VERSION}/consul_$${CONSUL_VERSION}_linux_amd64.zip
+    unzip consul_$${CONSUL_VERSION}_linux_amd64.zip
+    mv consul /usr/local/bin/
+    rm consul_$${CONSUL_VERSION}_linux_amd64.zip
+  
+  # Install Envoy (for Connect sidecar)
+  - |
+    curl -sL https://func-e.io/install.sh | bash -s -- -b /usr/local/bin
+    /usr/local/bin/func-e use ${envoy_version}
+    cp /root/.func-e/versions/${envoy_version}/bin/envoy /usr/local/bin/
+  
+  # Create Consul user and directories
+  - useradd --system --home /etc/consul.d --shell /bin/false consul || true
+  - mkdir -p /opt/consul /etc/consul.d
+  - chown -R consul:consul /opt/consul /etc/consul.d
+  
+  # Create Consul systemd service
+  - |
+    cat > /etc/systemd/system/consul.service <<CONSUL_SVC
+    [Unit]
+    Description=Consul Agent
+    Documentation=https://www.consul.io/
+    After=network-online.target
+    Wants=network-online.target
+    
+    [Service]
+    Type=notify
+    User=consul
+    Group=consul
+    ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d/
+    ExecReload=/bin/kill -HUP \$$MAINPID
+    KillMode=process
+    KillSignal=SIGTERM
+    Restart=on-failure
+    LimitNOFILE=65536
+    
+    [Install]
+    WantedBy=multi-user.target
+    CONSUL_SVC
+  
+  # Start Consul
+  - systemctl daemon-reload
+  - systemctl enable consul
+  - systemctl start consul
+  
+  # Configure nginx
+  - systemctl enable nginx
+  - systemctl start nginx
+  
+  # Wait for Consul to be ready
+  - sleep 15
+  
+  # Start sidecar proxy
+  - |
+    cat > /etc/systemd/system/consul-sidecar.service <<SIDECAR_SVC
+    [Unit]
+    Description=Consul Connect Sidecar Proxy for web
+    After=consul.service
+    Requires=consul.service
+    
+    [Service]
+    Type=simple
+    ExecStart=/usr/local/bin/consul connect envoy -sidecar-for ${service_id} -admin-bind 127.0.0.1:19000
+    Restart=always
+    RestartSec=5
+    
+    [Install]
+    WantedBy=multi-user.target
+    SIDECAR_SVC
+  
+  - systemctl daemon-reload
+  - systemctl enable consul-sidecar
+  - systemctl start consul-sidecar
+  
+  # Set hostname
+  - hostnamectl set-hostname ${hostname}
