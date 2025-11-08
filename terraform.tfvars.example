@@ -1,0 +1,35 @@
+# Hetzner Landing Zone Configuration
+# Copy this file to terraform.tfvars and fill in your values
+
+# Required: Hetzner Cloud API Token
+# Get it from: https://console.hetzner.cloud/ -> Your Project -> Security -> API Tokens
+hcloud_token = "your-hetzner-cloud-api-token-here"
+
+# Environment name (dev, staging, prod)
+environment = "prod"
+
+# Project name - will be used as prefix for all resources
+project_name = "landing-zone"
+
+# Network configuration
+network_zone = "eu-central"  # or "us-east"
+
+# Primary location for resources
+# Options: fsn1 (Falkenstein), nbg1 (Nuremberg), hel1 (Helsinki), ash (Ashburn), hil (Hillsboro)
+primary_location = "nbg1"
+
+# Path to your SSH public key
+ssh_public_key_path = "./id_ed25519_hetzner_cloud_k3s.pub"
+
+# IP addresses allowed to SSH to bastion (CIDR notation)
+# For security, restrict this to your actual IP
+# Example: ["1.2.3.4/32"]
+allowed_ssh_ips = ["0.0.0.0/0", "::/0"]
+
+# Additional tags for resources
+tags = {
+  ManagedBy   = "Terraform"
+  Environment = "Landing-Zone"
+  Team        = "Infrastructure"
+  CostCenter  = "IT"
+}

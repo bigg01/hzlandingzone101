@@ -1,0 +1,44 @@
+# Terraform files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# SSH keys
+id_*
+*.pem
+*.key
+!*.key.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+
+# Logs
+*.log
+
+# Kubeconfig
+kubeconfig
+k3s_kubeconfig
+*.kubeconfig
+
+# Inventory files
+inventory.ini
