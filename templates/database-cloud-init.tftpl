@@ -90,6 +90,29 @@ write_files:
       fi
       # Restart postgres to apply changes
       systemctl restart postgresql
+
+      # Install pgAdmin4 (web mode)
+      # Add pgAdmin repository and key
+      curl -fsSL https://www.pgadmin.org/static/packages_pgadmin_org.pub | apt-key add - >/dev/null 2>&1 || true
+      echo "deb https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/$$(lsb_release -cs) pgadmin4 main" > /etc/apt/sources.list.d/pgadmin4.list
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y pgadmin4-web
+
+      # Configure pgAdmin initial user (non-interactive)
+      PGADMIN_EMAIL="admin@${hostname}"
+      PGADMIN_PASS=$$(openssl rand -hex 12)
+      /usr/pgadmin4/bin/setup-web.sh --yes --email "$$PGADMIN_EMAIL" --password "$$PGADMIN_PASS" || true
+
+      # Persist pgAdmin credentials (separate secure file)
+      PGADMIN_CREDFILE=/root/pgadmin-credentials.txt
+      umask 077
+      : > "$$PGADMIN_CREDFILE"
+      {
+        echo "pgadmin_email=$$PGADMIN_EMAIL"
+        echo "pgadmin_password=$$PGADMIN_PASS"
+      } >> "$$PGADMIN_CREDFILE"
+      chmod 600 "$$PGADMIN_CREDFILE"
+      echo "pgAdmin configured. Credentials saved to $$PGADMIN_CREDFILE"
       # Create credentials file and random passwords
       CREDFILE=/root/postgres-credentials.txt
       umask 077

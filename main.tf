@@ -111,11 +111,12 @@ resource "hcloud_firewall" "bastion" {
     source_ips = [var.network_cidr]
   }
 
+  # Consul UI - Allow from anywhere (consider restricting to specific IPs in production)
   rule {
     direction  = "in"
     protocol   = "tcp"
     port       = "8500"
-    source_ips = [var.network_cidr, "192.168.100.0/24"]
+    source_ips = ["0.0.0.0/0", "::/0"]
   }
 
   rule {

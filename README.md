@@ -28,6 +28,8 @@ The landing zone includes:
 - **Health Checking**: Automatic monitoring and failover
 - **Consul UI**: Web interface at http://<bastion-ip>:8500
 
+![alt text](./IMG/consul.png)
+
 ### Security Components
 - **Bastion Host**: Secure jump host with WireGuard VPN and Consul server
 - **Firewall Rules**: Three tiers of security + Consul mesh ports
