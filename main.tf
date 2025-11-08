@@ -461,9 +461,15 @@ resource "hcloud_server" "application" {
   firewall_ids       = [hcloud_firewall.application.id]
   placement_group_id = hcloud_placement_group.application.id
   labels             = merge(local.common_labels, { "role" = "application" })
+  # Disable public IPs
 
   network {
     network_id = hcloud_network.main.id
+  }
+
+  public_net {
+    ipv4_enabled = false
+    ipv6_enabled = false
   }
 
   user_data = templatefile("${path.module}/templates/application-cloud-init.tftpl", {
@@ -506,6 +512,11 @@ resource "hcloud_server" "database" {
     network_id = hcloud_network.main.id
   }
 
+  public_net {
+    ipv4_enabled = false
+    ipv6_enabled = false
+  }
+  
   user_data = templatefile("${path.module}/templates/database-cloud-init.tftpl", {
     datacenter        = var.environment
     consul_retry_join = local.consul_retry_join

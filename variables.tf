@@ -122,7 +122,14 @@ variable "subnet_dmz_cidr" {
 variable "ssh_public_key_path" {
   description = "Path to SSH public key"
   type        = string
-  default     = "./id_ed25519_hetzner_cloud_k3s.pub"
+  default     = "./id_ed25519_hetzner_cloud.pub"
+}
+
+variable "ssh_private_key_path" {
+  description = "Path to SSH private key"
+  type        = string
+  default     = "./id_ed25519_hetzner_cloud"
+  
 }
 
 variable "allowed_ssh_ips" {

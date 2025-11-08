@@ -58,12 +58,12 @@ output "bastion_server_id" {
 
 output "bastion_ssh_command" {
   description = "SSH command to connect to bastion"
-  value       = "ssh -i ${var.ssh_public_key_path} admin@${hcloud_server.bastion.ipv4_address}"
+  value       = "ssh -i ${var.ssh_private_key_path} -o StrictHostKeyChecking=no admin@${hcloud_server.bastion.ipv4_address}"
 }
 
 output "wireguard_info_command" {
   description = "Command to retrieve WireGuard configuration from bastion"
-  value       = "ssh -i ${var.ssh_public_key_path} admin@${hcloud_server.bastion.ipv4_address} 'cat /root/wireguard-info.txt && cat /etc/wireguard/wg0.conf'"
+  value       = "ssh -i ${var.ssh_private_key_path} -o StrictHostKeyChecking=no admin@${hcloud_server.bastion.ipv4_address} 'sudo cat /root/wireguard-info.txt && sudo cat /etc/wireguard/wg0.conf'"
 }
 
 # ============================================================================

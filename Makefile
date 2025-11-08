@@ -84,22 +84,22 @@ consul-status: ## Check Consul service mesh status
 		echo "$(RED)Error: Could not get bastion IP$(NC)"; \
 		exit 1; \
 	fi; \
-	ssh -i ./id_ed25519_hetzner_cloud_k3s -o StrictHostKeyChecking=no admin@$$BASTION_IP 'consul members'
+	ssh -i ./id_ed25519_hetzner_cloud -o StrictHostKeyChecking=no admin@$$BASTION_IP 'consul members'
 
 consul-services: ## List registered Consul services
 	@echo "$(BLUE)Registered Consul services:$(NC)"
 	@BASTION_IP=$$(terraform output -raw bastion_public_ip 2>/dev/null); \
-	ssh -i ./id_ed25519_hetzner_cloud_k3s -o StrictHostKeyChecking=no admin@$$BASTION_IP 'consul catalog services'
+	ssh -i ./id_ed25519_hetzner_cloud -o StrictHostKeyChecking=no admin@$$BASTION_IP 'consul catalog services'
 
 consul-intentions: ## Show Consul service intentions (access policies)
 	@echo "$(BLUE)Consul service intentions:$(NC)"
 	@BASTION_IP=$$(terraform output -raw bastion_public_ip 2>/dev/null); \
-	ssh -i ./id_ed25519_hetzner_cloud_k3s -o StrictHostKeyChecking=no admin@$$BASTION_IP 'consul intention list'
+	ssh -i ./id_ed25519_hetzner_cloud -o StrictHostKeyChecking=no admin@$$BASTION_IP 'consul intention list'
 
 consul-setup: ## Setup Consul service mesh policies
 	@echo "$(BLUE)Configuring Consul service mesh...$(NC)"
 	@BASTION_IP=$$(terraform output -raw bastion_public_ip 2>/dev/null); \
-	ssh -i ./id_ed25519_hetzner_cloud_k3s -o StrictHostKeyChecking=no admin@$$BASTION_IP '/usr/local/bin/setup-consul-intentions.sh'
+	ssh -i ./id_ed25519_hetzner_cloud -o StrictHostKeyChecking=no admin@$$BASTION_IP '/usr/local/bin/setup-consul-intentions.sh'
 
 consul-ui: ## Get Consul UI URL
 	@terraform output -raw consul_ui_url
@@ -146,7 +146,7 @@ test-ssh: ## Test SSH connection to bastion
 		exit 1; \
 	fi; \
 	echo "Testing connection to $$BASTION_IP..."; \
-	ssh -i ./id_ed25519_hetzner_cloud_k3s -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$$BASTION_IP "echo '$(GREEN)SSH connection successful!$(NC)'" || \
+	ssh -i ./id_ed25519_hetzner_cloud -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$$BASTION_IP "echo '$(GREEN)SSH connection successful!$(NC)'" || \
 	echo "$(RED)SSH connection failed!$(NC)"
 
 setup-vars: ## Create terraform.tfvars from example
@@ -159,11 +159,11 @@ setup-vars: ## Create terraform.tfvars from example
 	fi
 
 generate-ssh-key: ## Generate SSH key pair
-	@if [ -f ./id_ed25519_hetzner_cloud_k3s ]; then \
+	@if [ -f ./id_ed25519_hetzner_cloud ]; then \
 		echo "$(YELLOW)SSH key already exists. Skipping...$(NC)"; \
 	else \
 		echo "$(BLUE)Generating SSH key pair...$(NC)"; \
-		ssh-keygen -t ed25519 -f ./id_ed25519_hetzner_cloud_k3s -C "hetzner-landing-zone" -N ""; \
+		ssh-keygen -t ed25519 -f ./id_ed25519_hetzner_cloud -C "hetzner-landing-zone" -N ""; \
 		echo "$(GREEN)SSH key generated!$(NC)"; \
 	fi
 
